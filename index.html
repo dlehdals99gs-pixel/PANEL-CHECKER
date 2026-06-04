@@ -234,6 +234,11 @@ textarea{resize:vertical;min-height:54px}
 .msg-bubble-wrap.mine .msg-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
 .msg-bubble-wrap.theirs .msg-bubble{background:var(--bg-card);color:var(--text-hi);border:1px solid var(--border);border-bottom-left-radius:4px}
 .msg-time{font-size:10px;color:var(--text-lo);margin-top:3px;font-family:'JetBrains Mono',monospace}
+.msg-bubble-wrap{position:relative}
+.msg-del-btn{display:none;position:absolute;top:0;background:var(--red-dim);color:var(--red);border:1px solid rgba(185,28,28,.3);border-radius:5px;padding:2px 7px;font-size:11px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;font-weight:600;white-space:nowrap}
+.msg-bubble-wrap.mine .msg-del-btn{left:-60px}
+.msg-bubble-wrap.theirs .msg-del-btn{right:-60px}
+.msg-bubble-wrap:hover .msg-del-btn{display:block}
 .msg-unread-dot{width:7px;height:7px;border-radius:50%;background:var(--red);display:inline-block;margin-left:5px}
 .msg-input-wrap{padding:12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
 .msg-input{flex:1;background:var(--bg-card);border:1px solid var(--border);border-radius:9px;color:var(--text-hi);padding:9px 13px;font-size:13px;font-family:'Noto Sans KR',sans-serif;outline:none;resize:none;height:42px;transition:border-color .15s}
@@ -607,10 +612,23 @@ const db = firebase.firestore();
 const colRef = db.collection('panel_records');
 
 // ══ 스토리지 (비밀번호는 localStorage, 레코드는 Firestore) ══
-const STORE_PW='panel_passwords_v1';
 const DEFAULT_PW={admin:'0000',hankyo:'0000',hansong:'0000'};
-function getPw(){try{return JSON.parse(localStorage.getItem(STORE_PW)||'null')||{...DEFAULT_PW}}catch(e){return{...DEFAULT_PW}}}
-function setPw(o){localStorage.setItem(STORE_PW,JSON.stringify(o))}
+let _cachedPw = null;
+
+// 비밀번호 Firebase에서 불러오기
+async function fetchPw(){
+  try{
+    const doc = await db.collection('settings').doc('passwords').get();
+    if(doc.exists) _cachedPw = doc.data();
+    else _cachedPw = {...DEFAULT_PW};
+  }catch(e){ _cachedPw = {...DEFAULT_PW}; }
+  return _cachedPw;
+}
+function getPw(){ return _cachedPw || {...DEFAULT_PW}; }
+async function setPw(o){
+  _cachedPw = o;
+  await db.collection('settings').doc('passwords').set(o);
+}
 
 // Firestore CRUD
 async function loadRec(){
@@ -662,8 +680,10 @@ function doGuestView(){
   startSync();
 }
 
-function doLogin(){
+async function doLogin(){
   const pw=document.getElementById('loginPw').value;
+  document.getElementById('loginErr').textContent='확인 중...';
+  await fetchPw();
   if(getPw()[loginTab]!==pw){document.getElementById('loginErr').textContent='비밀번호가 올바르지 않습니다.';return}
   currentUser=loginTab;
   localStorage.setItem('currentUser', currentUser);
@@ -954,8 +974,8 @@ function openPwModal(){
   document.getElementById('pwModalOv').style.display='flex';
 }
 function closePwModal(){document.getElementById('pwModalOv').style.display='none'}
-function savePw(){
-  const pws=getPw();
+async function savePw(){
+  const pws={...getPw()};
   const oldA=document.getElementById('pwAdminOld').value;
   const newA=document.getElementById('pwAdminNew').value;
   const newH=document.getElementById('pwHankyo').value;
@@ -964,7 +984,7 @@ function savePw(){
   if(newA){if(oldA!==pws.admin){toast('관리자 현재 비밀번호가 틀렸습니다.','error');return}pws.admin=newA}
   if(newH)pws.hankyo=newH;
   if(newS)pws.hansong=newS;
-  setPw(pws);toast('비밀번호가 저장됐습니다.','success');closePwModal();
+  await setPw(pws);toast('비밀번호가 저장됐습니다.','success');closePwModal();
 }
 
 
@@ -1106,11 +1126,14 @@ function parseXls(arrayBuffer, filename){
     const no=row[0];
     const name=row[1];
     const qty=row[4];
-    if(no===null||no===undefined||name===null||name===undefined) continue;
-    const noStr=String(no).trim();
-    const nameStr=String(name).trim();
-    if(!noStr||nameStr.includes('이 하 여 백')||nameStr.includes('합계')) break;
-    if(!/^\d+$/.test(noStr)) break;
+    const nameStr=name!=null?String(name).trim():'';
+    // 종료 조건
+    if(nameStr.includes('이 하 여 백')||nameStr.includes('합계')) break;
+    // 구분자 행 (이어서 등) - 스킵하고 계속
+    if(nameStr.includes('이어서')||nameStr.includes('NOTE')||nameStr.includes('첨     부')) continue;
+    // NO 없거나 숫자 아니면 스킵
+    const noStr=no!=null?String(no).replace('.0','').trim():'';
+    if(!noStr||!/^\d+$/.test(noStr)) continue;
     const qtyNum=parseInt(qty)||1;
     // col6=외함, col7=DOOR, col9=내판
     if(isDiag(i,6)){ skipB+=qtyNum; } else { totalB+=qtyNum; }
@@ -1284,11 +1307,14 @@ function renderMsgs(msgs){
     return;
   }
   const coLabel={admin:'관리자', hankyo:'한결', hansong:'한송'};
+  const ch = getMsgChannel();
   list.innerHTML = msgs.map(m=>{
     const isMine = m.from === currentUser;
     const time = m.createdAt ? new Date(m.createdAt.toDate()).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     const unread = !isMine && !m.readBy?.includes(currentUser) ? '<span class="msg-unread-dot"></span>' : '';
+    const delBtn = currentUser==='admin' ? `<button class="msg-del-btn" onclick="deleteMsg('${ch}','${m.id}')">🗑️ 삭제</button>` : '';
     return `<div class="msg-bubble-wrap ${isMine?'mine':'theirs'}">
+      ${delBtn}
       <div class="msg-sender">${coLabel[m.from]||m.from}${unread}</div>
       <div class="msg-bubble">${e(m.text)}</div>
       <div class="msg-time">${time}</div>
@@ -1305,6 +1331,12 @@ async function markRead(ch, msgs){
       readBy: firebase.firestore.FieldValue.arrayUnion(currentUser)
     }).catch(()=>{});
   }
+}
+
+async function deleteMsg(ch, msgId){
+  if(!confirm('이 메시지를 삭제하시겠습니까?')) return;
+  await db.collection('messages').doc(ch).collection('chats').doc(msgId).delete();
+  toast('메시지가 삭제됐습니다.','success');
 }
 
 async function sendMsg(){
@@ -1396,7 +1428,7 @@ function startSync(){
 }
 
 // 세션 복원
-window.addEventListener('load', function(){
+window.addEventListener('load', async function(){
   const savedUser = localStorage.getItem('currentUser');
   if(savedUser === 'guest'){
     currentUser = 'guest';
@@ -1406,14 +1438,20 @@ window.addEventListener('load', function(){
     document.getElementById('mainApp').style.marginTop='40px';
     setupUI();
     startSync();
-  } else if(savedUser && getPw()[savedUser] !== undefined){
-    currentUser = savedUser;
-    loginTab = savedUser;
-    document.getElementById('loginScreen').style.display='none';
-    document.getElementById('mainApp').style.display='flex';
-    setupUI();
-    startSync();
-    startMsgWatch();
+  } else if(savedUser){
+    await fetchPw();
+    if(getPw()[savedUser] !== undefined){
+      currentUser = savedUser;
+      loginTab = savedUser;
+      document.getElementById('loginScreen').style.display='none';
+      document.getElementById('mainApp').style.display='flex';
+      setupUI();
+      startSync();
+      startMsgWatch();
+    } else {
+      localStorage.removeItem('currentUser');
+      setTimeout(()=>document.getElementById('loginPw').focus(),150);
+    }
   } else {
     setTimeout(()=>document.getElementById('loginPw').focus(),150);
   }
