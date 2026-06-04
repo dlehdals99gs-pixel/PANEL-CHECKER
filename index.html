@@ -592,9 +592,9 @@ textarea{resize:vertical;min-height:54px}
 
 <div class="tc" id="tc"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script>
 // ══ Firebase 초기화 ══
@@ -606,6 +606,11 @@ const firebaseConfig = {
   messagingSenderId: "567871590993",
   appId: "1:567871590993:web:a6243d8f8ee7b1eda05e70"
 };
+// Firebase 로드 확인
+if(typeof firebase === 'undefined'){
+  document.write('<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"><\/script>');
+  document.write('<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"><\/script>');
+}
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const colRef = db.collection('panel_records');
